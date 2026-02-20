@@ -1,0 +1,589 @@
+// ============================================
+// Zenith — CI/CD Healing Agent
+// Main Application Controller
+// ============================================
+
+import './style.css';
+import './dashboard.css';
+import {
+  AGENTS,
+  AGENT_MESSAGES,
+  DEBRIEF_PASSED,
+  DEBRIEF_FAILED,
+  randomFrom,
+  randomInt,
+  generateSHA,
+  generateFix,
+  generateTimelineItem,
+  interpolateMessage,
+} from './simulation.js';
+
+// ---- State ----
+const state = {
+  screen: 'landing', // landing | dashboard
+  repoUrl: '',
+  teamName: '',
+  teamLeader: '',
+  maxIterations: 5,
+  branchName: '',
+  isValid: false,
+
+  // Run state
+  running: false,
+  startTime: null,
+  timerInterval: null,
+  currentAgent: 'orchestrator',
+  thoughtLines: [],
+  fixes: [],
+  timeline: [],
+  currentIteration: 0,
+  passed: false,
+
+  // Scores
+  healthBefore: 0,
+  healthAfter: 0,
+  testBefore: 0,
+  testAfter: 0,
+  lintBefore: 0,
+  lintAfter: 0,
+  typeBefore: 0,
+  typeAfter: 0,
+  importBefore: 0,
+  importAfter: 0,
+  baseScore: 0,
+  speedBonus: 0,
+  efficiencyPenalty: 0,
+  finalScore: 0,
+
+  // Simulation
+  simIntervals: [],
+  simTimeouts: [],
+};
+
+// ---- DOM References ----
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+const dom = {
+  // Screens
+  screenLanding: $('#screen-landing'),
+  screenDashboard: $('#screen-dashboard'),
+  screenAuth: $('#screen-auth'),
+  configModal: $('#config-modal'),
+
+  // Landing Page
+  termTyping: $('#term-typing'),
+  landingTerminal: $('#landing-terminal'),
+  btnStartHealing: $('#btn-start-healing'),
+  btnConfigure: $('#btn-configure'),
+  btnSignIn: $('#btn-signin'),
+  navBtnText: $('#nav-btn-text'),
+  modalClose: $('#modal-close'),
+  particles: $('#particles'),
+  statNumbers: $$('.stat-number'),
+
+  // Auth Screen
+  authTitle: $('#auth-title'),
+  authSubtitle: $('#auth-subtitle'),
+  authForm: $('#auth-form'),
+  groupName: $('#group-name'),
+  authSubmitBtn: $('#auth-submit-btn'),
+  authSwitchBtn: $('#auth-switch-btn'),
+  authSwitchText: $('#auth-switch-text'),
+  authBackBtn: $('#auth-back-btn'),
+
+  // Form (Inside Modal)
+  repoUrl: $('#repo-url'),
+  repoStatus: $('#repo-status'),
+  repoError: $('#repo-error'),
+  teamName: $('#team-name'),
+  teamLeader: $('#team-leader'),
+  maxIterations: $('#max-iterations'),
+  iterValue: $('#iter-value'),
+  branchName: $('#branch-name'),
+  runBtn: $('#run-btn'),
+
+  // Dashboard Header/Nav
+  statusBadge: $('#status-badge'),
+  statusText: $('#status-text'),
+
+  // Dashboard
+  dashRepo: $('#dash-repo'),
+  dashTeam: $('#dash-team'),
+  dashBranch: $('#dash-branch'),
+  copyBranchBtn: $('#copy-branch-btn'),
+  stopBtn: $('#stop-btn'),
+
+  // Health
+  ringBefore: $('#ring-before'),
+  ringAfter: $('#ring-after'),
+  ringBeforeVal: $('#ring-before-val'),
+  ringAfterVal: $('#ring-after-val'),
+  deltaValue: $('#delta-value'),
+  metricTest: $('#metric-test'),
+  metricTestVal: $('#metric-test-val'),
+  metricLint: $('#metric-lint'),
+  metricLintVal: $('#metric-lint-val'),
+  metricType: $('#metric-type'),
+  metricTypeVal: $('#metric-type-val'),
+  metricImport: $('#metric-import'),
+  metricImportVal: $('#metric-import-val'),
+
+  // Summary
+  summaryRepoLink: $('#summary-repo-link'),
+  summaryTeam: $('#summary-team'),
+  summaryLeader: $('#summary-leader'),
+  summaryBranch: $('#summary-branch'),
+  summaryFailures: $('#summary-failures'),
+  summaryCiStatus: $('#summary-ci-status'),
+  summaryTimer: $('#summary-timer'),
+
+  // Thought Stream
+  terminalContent: $('#terminal-content'),
+  currentAgentName: $('#current-agent-name'),
+  currentAgentIndicator: $('#current-agent'),
+
+  // Fixes
+  fixesTbody: $('#fixes-tbody'),
+  fixesEmpty: $('#fixes-empty'),
+  fixFilter: $('#fix-filter'),
+  exportCsvBtn: $('#export-csv-btn'),
+  fixesCardsMobile: $('#fixes-cards-mobile'),
+
+  // Timeline
+  timelineList: $('#timeline-list'),
+  timelineEmpty: $('#timeline-empty'),
+  timelineIterCount: $('#timeline-iter-count'),
+  timelineIterMax: $('#timeline-iter-max'),
+
+  // Score
+  scoreNumber: $('#score-number'),
+  scoreBase: $('#score-base'),
+  scoreSpeed: $('#score-speed'),
+  scorePenalty: $('#score-penalty'),
+  smtBase: $('#smt-base'),
+  smtSpeed: $('#smt-speed'),
+  smtPenalty: $('#smt-penalty'),
+  smtFinal: $('#smt-final'),
+
+  // Debrief
+  debriefBody: $('#debrief-body'),
+  debriefContent: $('#debrief-content'),
+  debriefTimestamp: $('#debrief-timestamp'),
+  debriefWordcount: $('#debrief-wordcount'),
+};
+
+// ---- Toast ----
+function showToast(msg) {
+  let toast = document.querySelector('.copy-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.className = 'copy-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+// ---- Landing Page Animations ----
+
+function initParticles() {
+  const codeBits = ['0', '1', 'f', 'x', '{', '}', ';', '=>', 'git', 'ci', 'cd'];
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('span');
+    p.className = 'particle';
+    p.textContent = randomFrom(codeBits);
+    p.style.left = `${Math.random() * 100}%`;
+    p.style.animationDuration = `${5 + Math.random() * 10}s`;
+    p.style.animationDelay = `${Math.random() * 5}s`;
+    p.style.opacity = Math.random() * 0.5;
+    dom.particles.appendChild(p);
+  }
+}
+
+function initCounters() {
+  dom.statNumbers.forEach(el => {
+    const target = parseInt(el.dataset.target);
+    let count = 0;
+    const duration = 2000;
+    const stepTime = Math.abs(Math.floor(duration / target));
+    const timer = setInterval(() => {
+      count++;
+      el.textContent = count;
+      if (count >= target) clearInterval(timer);
+    }, stepTime);
+  });
+}
+
+const terminalLines = [
+  'Running multi-agent pipeline...',
+  'Analyzing repository dependencies...',
+  'Found 14 linting errors and 3 circular imports.',
+  'Applying Fixer Agent strategy: BREAK_CIRCULAR_DEP',
+  'Commit pushed: rift/heal-main branch',
+  'Triggering verification CI run...',
+  'All checks passed. System ready.'
+];
+
+function startTerminalTyping() {
+  let lineIndex = 0;
+  function typeLine() {
+    const text = terminalLines[lineIndex % terminalLines.length];
+    let charIndex = 0;
+    dom.termTyping.textContent = '';
+
+    const charTimer = setInterval(() => {
+      dom.termTyping.textContent += text[charIndex];
+      charIndex++;
+      if (charIndex >= text.length) {
+        clearInterval(charTimer);
+        setTimeout(() => {
+          const newLine = document.createElement('div');
+          newLine.className = 'term-line';
+          newLine.innerHTML = `<span class="term-msg" style="color:var(--text-3)">${text}</span>`;
+          dom.landingTerminal.insertBefore(newLine, dom.landingTerminal.querySelector('.term-prompt'));
+          lineIndex++;
+          setTimeout(typeLine, 1000);
+          if (dom.landingTerminal.childElementCount > 6) {
+            dom.landingTerminal.firstElementChild.remove();
+          }
+        }, 1500);
+      }
+    }, 40);
+  }
+  typeLine();
+}
+
+// ---- Form Validation ----
+function extractRepoName(url) {
+  try {
+    const match = url.match(/github\.com\/[\w.-]+\/([\w.-]+)/);
+    return match ? match[1].replace(/\.git$/, '') : '';
+  } catch {
+    return '';
+  }
+}
+
+function validateForm() {
+  const url = dom.repoUrl.value.trim();
+  const team = dom.teamName.value.trim();
+  const leader = dom.teamLeader.value.trim();
+
+  const isUrlValid = /^https?:\/\/github\.com\/[\w.-]+\/[\w.-]+/.test(url);
+
+  if (url.length === 0) {
+    dom.repoUrl.classList.remove('input-error', 'input-valid');
+    dom.repoStatus.innerHTML = '';
+    dom.repoError.textContent = '';
+  } else if (isUrlValid) {
+    dom.repoUrl.classList.remove('input-error');
+    dom.repoUrl.classList.add('input-valid');
+    dom.repoStatus.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`;
+    dom.repoError.textContent = '';
+  } else {
+    dom.repoUrl.classList.remove('input-valid');
+    dom.repoUrl.classList.add('input-error');
+    dom.repoStatus.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    dom.repoError.textContent = 'Enter a valid GitHub URL';
+  }
+
+  const repoName = extractRepoName(url);
+  dom.branchName.textContent = repoName ? `rift/heal-${repoName}` : 'rift/heal-<repo>';
+
+  const valid = isUrlValid && team.length > 0 && leader.length > 0;
+  state.isValid = valid;
+  dom.runBtn.disabled = !valid;
+
+  if (valid) {
+    state.repoUrl = url;
+    state.teamName = team;
+    state.teamLeader = leader;
+    state.branchName = `rift/heal-${repoName}`;
+  }
+}
+
+// ---- Screen Transitions ----
+function switchScreen(screen) {
+  state.screen = screen;
+  dom.screenLanding.classList.remove('active');
+  dom.screenDashboard.classList.remove('active');
+  dom.screenAuth.classList.remove('active');
+  dom.configModal.classList.remove('open');
+
+  if (screen === 'landing') {
+    dom.screenLanding.classList.add('active');
+  } else if (screen === 'dashboard') {
+    dom.screenDashboard.classList.add('active');
+  } else if (screen === 'auth') {
+    dom.screenAuth.classList.add('active');
+    toggleAuthMode('signin');
+  }
+}
+
+let currentAuthMode = 'signin';
+function toggleAuthMode(mode) {
+  currentAuthMode = mode;
+  if (mode === 'signin') {
+    dom.authTitle.textContent = 'Welcome back';
+    dom.authSubtitle.textContent = 'Please enter your details to sign in.';
+    dom.authSubmitBtn.textContent = 'Sign in';
+    dom.authSwitchText.innerHTML = `Don't have an account? <a href="#" id="auth-switch-btn">Sign up</a>`;
+    dom.groupName.style.display = 'none';
+    $('#auth-name').required = false;
+  } else {
+    dom.authTitle.textContent = 'Create an account';
+    dom.authSubtitle.textContent = 'Join Zenith and start healing your repos.';
+    dom.authSubmitBtn.textContent = 'Sign up';
+    dom.authSwitchText.innerHTML = `Already have an account? <a href="#" id="auth-switch-btn">Sign in</a>`;
+    dom.groupName.style.display = 'flex';
+    $('#auth-name').required = true;
+  }
+  // Re-attach listener to the newly created ink
+  $('#auth-switch-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+    toggleAuthMode(currentAuthMode === 'signin' ? 'signup' : 'signin');
+  });
+}
+
+function setStatus(type, text) {
+  dom.statusBadge.className = `status-badge status-${type}`;
+  dom.statusText.textContent = text;
+}
+
+// ---- Timer ----
+function startTimer() {
+  state.startTime = Date.now();
+  state.timerInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - state.startTime) / 1000);
+    const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const secs = String(elapsed % 60).padStart(2, '0');
+    dom.summaryTimer.textContent = `${mins}:${secs}`;
+  }, 1000);
+}
+
+function stopTimer() {
+  if (state.timerInterval) {
+    clearInterval(state.timerInterval);
+    state.timerInterval = null;
+  }
+}
+
+// ---- Health Score Rings ----
+const CIRCUMFERENCE = 2 * Math.PI * 52;
+
+function setRing(el, percent) {
+  const offset = CIRCUMFERENCE - (percent / 100) * CIRCUMFERENCE;
+  el.style.strokeDashoffset = offset;
+}
+
+function updateHealthUI() {
+  setRing(dom.ringBefore, state.healthBefore);
+  setRing(dom.ringAfter, state.healthAfter);
+  dom.ringBeforeVal.textContent = state.healthBefore;
+  dom.ringAfterVal.textContent = state.healthAfter;
+
+  const delta = state.healthAfter - state.healthBefore;
+  dom.deltaValue.textContent = delta >= 0 ? `+${delta}` : `${delta}`;
+  dom.deltaValue.style.color = delta >= 0 ? 'var(--emerald)' : 'var(--red)';
+  dom.deltaValue.style.background = delta >= 0 ? 'var(--emerald-dim)' : 'var(--red-dim)';
+
+  dom.metricTest.style.width = `${state.testAfter}%`;
+  dom.metricTestVal.textContent = `${state.testAfter}%`;
+  dom.metricLint.style.width = `${state.lintAfter}%`;
+  dom.metricLintVal.textContent = `${state.lintAfter}%`;
+  dom.metricType.style.width = `${state.typeAfter}%`;
+  dom.metricTypeVal.textContent = `${state.typeAfter}%`;
+  dom.metricImport.style.width = `${state.importAfter}%`;
+  dom.metricImportVal.textContent = `${state.importAfter}%`;
+}
+
+// ---- Thought Stream ----
+function addThoughtLine(agent, message) {
+  const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const line = document.createElement('div');
+  line.className = 'terminal-line';
+  line.innerHTML = `<span class="term-time">${time}</span><span class="term-agent agent-${agent}">${agent.toUpperCase()}</span><span class="term-msg">${message}</span>`;
+  dom.terminalContent.appendChild(line);
+  dom.terminalContent.parentElement.scrollTop = dom.terminalContent.parentElement.scrollHeight;
+  dom.currentAgentName.textContent = `${agent.charAt(0).toUpperCase() + agent.slice(1)} Agent`;
+  dom.currentAgentIndicator.querySelector('.agent-dot').style.background = `var(--agent-${agent})`;
+}
+
+// ---- Fixes Table ----
+function renderFix(fix) {
+  const tr = document.createElement('tr');
+  tr.className = 'row-new';
+  const confClass = fix.confidence >= 80 ? 'conf-high' : fix.confidence >= 60 ? 'conf-med' : 'conf-low';
+  const statusClass = fix.status.toLowerCase().replace(' ', '-');
+
+  tr.innerHTML = `
+    <td class="file-cell" title="${fix.file}">${fix.file}</td>
+    <td><span class="bug-badge bug-${fix.bugType}">${fix.bugType.replace('-', ' ')}</span></td>
+    <td><span class="line-num">L${fix.line}</span></td>
+    <td><div class="confidence-bar"><div class="confidence-track"><div class="confidence-fill ${confClass}" style="width:${fix.confidence}%"></div></div><span class="confidence-val">${fix.confidence}%</span></div></td>
+    <td>${fix.description}</td>
+    <td><span class="fix-status fix-${statusClass}">${fix.status}</span></td>
+  `;
+  tr.dataset.bugtype = fix.bugType;
+  dom.fixesTbody.appendChild(tr);
+  dom.fixesEmpty.classList.add('hidden');
+
+  const card = document.createElement('div');
+  card.className = 'fix-card-mobile';
+  card.dataset.bugtype = fix.bugType;
+  card.innerHTML = `
+    <div class="fcm-header"><span class="fcm-file">${fix.file}</span><span class="fix-status fix-${statusClass}">${fix.status}</span></div>
+    <div class="fcm-desc">${fix.description}</div>
+    <div class="fcm-meta"><span class="bug-badge bug-${fix.bugType}">${fix.bugType.replace('-', ' ')}</span><span class="line-num">L${fix.line}</span></div>
+  `;
+  dom.fixesCardsMobile.appendChild(card);
+}
+
+// ---- Simulation Engine (Simplified for direct call) ----
+function startSimulation() {
+  const repoName = extractRepoName(state.repoUrl);
+  state.healthBefore = randomInt(30, 50); state.testBefore = randomInt(40, 60); state.lintBefore = randomInt(35, 55); state.typeBefore = randomInt(40, 60); state.importBefore = randomInt(50, 70);
+  state.healthAfter = state.healthBefore; updateHealthUI();
+  state.passed = Math.random() > 0.3;
+
+  const totalFixes = randomInt(8, 15);
+  let totalDelay = 500;
+
+  const phases = [
+    { agent: 'orchestrator', count: 3, delay: 1000 },
+    { agent: 'analyzer', count: 4, delay: 1200 },
+    { agent: 'fixer', count: 5, delay: 1500 },
+    { agent: 'committer', count: 3, delay: 1200 },
+    { agent: 'verifier', count: 4, delay: 1200 },
+  ];
+
+  phases.forEach((phase, pIdx) => {
+    for (let i = 0; i < phase.count; i++) {
+      const timeout = setTimeout(() => {
+        if (!state.running) return;
+        const msgTpl = randomFrom(AGENT_MESSAGES[phase.agent]);
+        const msg = interpolateMessage(msgTpl, { repo: repoName, iter: '1', maxIter: state.maxIterations, passed: '40', failed: '2', duration: '15', sha: generateSHA(), status: state.passed ? 'PASSED' : 'FAILED', coverage: '90' });
+        addThoughtLine(phase.agent, msg);
+
+        if (phase.agent === 'fixer' && i % 2 === 0 && state.fixes.length < totalFixes) {
+          const fix = generateFix(state.fixes.length);
+          state.fixes.push(fix);
+          renderFix(fix);
+          dom.summaryFailures.textContent = state.fixes.filter(f => f.status !== 'Fixed').length;
+        }
+
+        if (pIdx > 1) { // Analyzer done
+          const progress = (pIdx - 2 + (i / phase.count)) / 3;
+          state.healthAfter = Math.round(state.healthBefore + (90 - state.healthBefore) * progress);
+          updateHealthUI();
+        }
+      }, totalDelay);
+      state.simTimeouts.push(timeout);
+      totalDelay += phase.delay;
+    }
+  });
+
+  setTimeout(() => {
+    if (state.running) completeRun();
+  }, totalDelay + 1000);
+}
+
+function completeRun() {
+  state.running = false;
+  stopTimer();
+  state.healthAfter = state.passed ? randomInt(85, 98) : randomInt(60, 75);
+  updateHealthUI();
+  setStatus(state.passed ? 'passed' : 'failed', state.passed ? 'PASSED' : 'FAILED');
+  dom.summaryCiStatus.className = `ci-badge ci-${state.passed ? 'passed' : 'failed'}`;
+  dom.summaryCiStatus.textContent = state.passed ? 'PASSED' : 'FAILED';
+
+  const debriefText = state.passed ? DEBRIEF_PASSED : DEBRIEF_FAILED;
+  let wordCount = 0;
+  dom.debriefContent.innerHTML = '';
+  const typewriter = setInterval(() => {
+    if (wordCount < debriefText.length) {
+      dom.debriefContent.textContent += debriefText[wordCount];
+      wordCount++;
+    } else {
+      clearInterval(typewriter);
+    }
+  }, 10);
+  state.simIntervals.push(typewriter);
+}
+
+// ---- Actions ----
+function startRun() {
+  if (!state.isValid) return;
+  state.running = true;
+  state.fixes = [];
+  dom.terminalContent.innerHTML = '';
+  dom.fixesTbody.innerHTML = '';
+  dom.fixesCardsMobile.innerHTML = '';
+  dom.fixesEmpty.classList.remove('hidden');
+
+  dom.dashRepo.textContent = state.repoUrl.replace('https://github.com/', '');
+  dom.dashTeam.textContent = state.teamName;
+  dom.dashBranch.textContent = state.branchName;
+
+  switchScreen('dashboard');
+  setStatus('running', 'RUNNING');
+  startTimer();
+  startSimulation();
+}
+
+// ---- Init ----
+function init() {
+  initParticles();
+  initCounters();
+  startTerminalTyping();
+
+  dom.btnStartHealing.addEventListener('click', () => dom.configModal.classList.add('open'));
+  dom.btnConfigure.addEventListener('click', () => dom.configModal.classList.add('open'));
+  dom.modalClose.addEventListener('click', () => dom.configModal.classList.remove('open'));
+  window.addEventListener('click', (e) => { if (e.target === dom.configModal) dom.configModal.classList.remove('open'); });
+
+  dom.btnSignIn.addEventListener('click', () => {
+    switchScreen('auth');
+  });
+
+  dom.authBackBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    switchScreen('landing');
+  });
+
+  dom.authForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    showToast(`${currentAuthMode === 'signin' ? 'Signed in' : 'Signed up'} successfully!`);
+    switchScreen('landing');
+    dom.navBtnText.textContent = 'Account';
+  });
+
+  dom.repoUrl.addEventListener('input', validateForm);
+  dom.teamName.addEventListener('input', validateForm);
+  dom.teamLeader.addEventListener('input', validateForm);
+  dom.maxIterations.addEventListener('input', (e) => {
+    state.maxIterations = e.target.value;
+    dom.iterValue.textContent = e.target.value;
+  });
+
+  $('#agent-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    startRun();
+  });
+
+  dom.stopBtn.addEventListener('click', () => {
+    if (!state.running) { switchScreen('landing'); return; }
+    state.running = false;
+    stopTimer();
+    setStatus('failed', 'STOPPED');
+    dom.stopBtn.textContent = 'Back to Landing';
+    state.simTimeouts.forEach(clearTimeout);
+  });
+
+  dom.copyBranchBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(state.branchName).then(() => showToast('Copied!'));
+  });
+}
+
+init();
