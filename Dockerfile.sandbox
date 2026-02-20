@@ -1,0 +1,36 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install essential tools: Git, Python, Pip, Curl
+RUN apt-get update && \
+    apt-get install -y \
+    curl \
+    git \
+    python3 \
+    python3-pip \
+    python3-venv \
+    sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js LTS (20.x)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install common Python testing tools globally (optional, as projects might have requirements.txt)
+# Using --break-system-packages because Ubuntu 22.04 might complain about global pip otherwise, 
+# but it's okay in this ephemeral sandbox.
+RUN pip3 install pytest pytest-json-report --break-system-packages || pip3 install pytest pytest-json-report
+
+# Global Node.js testing tools (optional as projects might use npm install)
+RUN npm install -g jest mocha
+
+# Create sandbox user to avoid running as root if needed
+RUN useradd -m sandbox && usermod -aG sudo sandbox
+RUN echo "sandbox ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+WORKDIR /sandbox
+
+# Keep container alive so we can exec into it
+CMD ["tail", "-f", "/dev/null"]

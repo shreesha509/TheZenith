@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous CI/CD Healing Agent</title>
+    <!-- Basic styling to make it somewhat presentable -->
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+            background-color: #f9fafb;
+            color: #111827;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            margin-top: 0;
+            color: #4f46e5;
+        }
+
+        .input-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            margin-right: 0.5rem;
+        }
+
+        button:hover {
+            background-color: #4338ca;
+        }
+
+        button:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        button.success {
+            background-color: #10b981;
+        }
+
+        button.success:hover {
+            background-color: #059669;
+        }
+
+        #statusPanel {
+            display: none;
+            margin-top: 2rem;
+        }
+
+        .log-container {
+            background: #1f2937;
+            color: #e5e7eb;
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 1rem;
+        }
+
+        .patch-preview {
+            background: #fdfbf7;
+            border: 1px solid #e5e7eb;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            background: #e0e7ff;
+            color: #4338ca;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="card">
+        <h1>CI/CD Healing Agent</h1>
+        <p>Trigger the AI to clone, test, and generate fixes for a repository.</p>
+
+        <div class="input-group">
+            <label for="repoUrl">GitHub Repository URL</label>
+            <input type="text" id="repoUrl" value="https://github.com/facebook/react"
+                placeholder="https://github.com/username/repo">
+        </div>
+
+        <div class="input-group">
+            <label for="teamName">Team Name</label>
+            <input type="text" id="teamName" value="Antigravity" readonly>
+            <small style="color: #6b7280;">Fixed per hackathon rules.</small>
+        </div>
+
+        <div class="input-group">
+            <label for="leaderName">Leader Name</label>
+            <input type="text" id="leaderName" value="Shreesha">
+        </div>
+
+        <button id="startBtn" onclick="startJob()">Start Healing Process</button>
+    </div>
+
+    <div class="card" id="statusPanel">
+        <h2>Job Status: <span class="badge" id="currentStatus">INITIALIZING</span></h2>
+        <p>Job ID: <code id="jobIdDisplay"></code></p>
+
+        <h3>Timeline Logs</h3>
+        <div class="log-container" id="timelineLogs"></div>
+
+        <div id="approvalSection"
+            style="display: none; border-top: 1px solid #e5e7eb; padding-top: 1rem; margin-top: 1rem;">
+            <h3 style="color: #d97706;">Review Required</h3>
+            <p>The AI has generated the following patches. Approve them to push the branch to your GitHub fork.</p>
+            <div id="patchesContainer"></div>
+            <button class="success" onclick="approveChanges()" id="approveBtn">Approve & Push to GitHub</button>
+        </div>
+    </div>
+
+    <script>
+        let currentJobId = null;
+        let pollingInterval = null;
+
+        // 1. Trigger the job
+        async function startJob() {
+            const startBtn = document.getElementById('startBtn');
+            const repoUrl = document.getElementById('repoUrl').value;
+            const leaderName = document.getElementById('leaderName').value;
+            const teamName = document.getElementById('teamName').value;
+
+            if (!repoUrl || !leaderName) {
+                alert("Please fill out Repo URL and Leader Name");
+                return;
+            }
+
+            startBtn.disabled = true;
+            startBtn.innerText = "Starting...";
+
+            // Reset UI
+            document.getElementById('statusPanel').style.display = 'block';
+            document.getElementById('timelineLogs').innerText = 'Initializing backend connection...';
+            document.getElementById('approvalSection').style.display = 'none';
+            document.getElementById('patchesContainer').innerHTML = '';
+            document.getElementById('approveBtn').disabled = false;
+            document.getElementById('approveBtn').innerText = "Approve & Push to GitHub";
+
+            try {
+                // Call the POST /api/analyze endpoint
+                const res = await fetch("http://localhost:3000/api/analyze", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ repoUrl, teamName, leaderName })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error || 'Failed to start job');
+                }
+
+                const data = await res.json();
+                currentJobId = data.jobId;
+
+                document.getElementById('jobIdDisplay').innerText = currentJobId;
+                startBtn.innerText = "Running Background Job";
+
+                // Start polling every 2 seconds
+                if (pollingInterval) clearInterval(pollingInterval);
+                pollingInterval = setInterval(pollStatus, 2000);
+
+            } catch (error) {
+                alert("Error: " + error.message);
+                startBtn.disabled = false;
+                startBtn.innerText = "Start Healing Process";
+            }
+        }
+
+        // 2. Poll for PENDING_APPROVAL or completion
+        async function pollStatus() {
+            if (!currentJobId) return;
+
+            try {
+                // Call the GET /api/status/:jobId endpoint
+                const res = await fetch(`http://localhost:3000/api/status/${currentJobId}`);
+                if (!res.ok) return;
+
+                const data = await res.json();
+
+                // Update Badge
+                const statusBadge = document.getElementById('currentStatus');
+                statusBadge.innerText = data.status || data.ciCdStatus; // results.json uses ciCdStatus
+
+                // Update Timeline Logs
+                const logBox = document.getElementById('timelineLogs');
+                if (data.timeline && data.timeline.length > 0) {
+                    logBox.innerText = data.timeline.map(t =>
+                        `[${t.timestamp.split('T')[1].split('.')[0]}] Iteration ${t.iteration} | ${t.status}\n`
+                    ).join('\n');
+                    logBox.scrollTop = logBox.scrollHeight;
+                }
+
+                // Check State Machine
+                if (data.status === 'PENDING_APPROVAL') {
+                    // Stop polling, we are waiting for user action!
+                    clearInterval(pollingInterval);
+
+                    // Show the approval UI and patches
+                    document.getElementById('approvalSection').style.display = 'block';
+
+                    const patchesContainer = document.getElementById('patchesContainer');
+                    patchesContainer.innerHTML = ''; // clear old
+
+                    if (data.pendingFixes && data.pendingFixes.length > 0) {
+                        data.pendingFixes.forEach((fix, index) => {
+                            const html = `
+                                <div>
+                                    <strong>Fix ${index + 1}: ${fix.file}</strong> (Line ${fix.lineNumber})
+                                    <br><small>Commit: <code>${fix.commitMessage}</code></small>
+                                    <div class="patch-preview">${escapeHtml(fix.patch || 'No preview available')}</div>
+                                </div>
+                            `;
+                            patchesContainer.innerHTML += html;
+                        });
+                    } else {
+                        patchesContainer.innerHTML = '<p>No fix preview data found.</p>';
+                    }
+
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('startBtn').innerText = "Start New Job";
+
+                } else if (data.status === 'COMPLETED' || data.ciCdStatus === 'FAILED' || data.ciCdStatus === 'PASSED') {
+                    // Job is totally finished (either failed testing, or finalized after approval)
+                    clearInterval(pollingInterval);
+                    document.getElementById('startBtn').disabled = false;
+                    document.getElementById('startBtn').innerText = "Start New Job";
+
+                    if (data.status === 'COMPLETED' || data.ciCdStatus === 'PASSED') {
+                        statusBadge.style.background = '#d1fae5';
+                        statusBadge.style.color = '#065f46';
+                    } else {
+                        statusBadge.style.background = '#fee2e2';
+                        statusBadge.style.color = '#991b1b';
+                    }
+                }
+
+            } catch (e) {
+                console.error("Polling error:", e);
+            }
+        }
+
+        // 3. User clicks "Accept" -> Tell backend to push
+        async function approveChanges() {
+            if (!currentJobId) return;
+
+            const btn = document.getElementById('approveBtn');
+            btn.disabled = true;
+            btn.innerText = "Pushing to GitHub...";
+
+            try {
+                // Call the POST /api/approve/:jobId endpoint
+                const res = await fetch(`http://localhost:3000/api/approve/${currentJobId}`, {
+                    method: "POST"
+                });
+
+                if (!res.ok) {
+                    throw new Error("Push failed. Check console.");
+                }
+
+                alert("Successfully pushed to GitHub and completed job! Check the results.json file in your backend.");
+
+                // Hide approval section and resume polling just briefly to catch the final COMPLETED state
+                document.getElementById('approvalSection').style.display = 'none';
+                pollingInterval = setInterval(pollStatus, 2000);
+
+            } catch (e) {
+                alert("Error during approval: " + e.message);
+                btn.disabled = false;
+                btn.innerText = "Try Again";
+            }
+        }
+
+        // Helper to prevent XSS in the patch preview
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+    </script>
+</body>
+
+</html>
