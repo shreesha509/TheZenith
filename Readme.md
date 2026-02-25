@@ -5,11 +5,9 @@ Automatically analyzes GitHub repositories and generates missing CI/CD workflows
 ## Features
 
 * Fork any public repository
-* Clone and analyze project files
 * Detect missing CI/CD pipelines
 * Generate GitHub Actions workflows
 * Commit and push fixes automatically
-* Simple React dashboard
 
 ## How it Works
 
