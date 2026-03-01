@@ -153,7 +153,7 @@ export default function App() {
         e.preventDefault();
         setIsLoading(true);
         try {
-            const res = await fetch('http://localhost:3000/api/analyze', {
+            const res = await fetch('https://thezenith.onrender.com/api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -202,7 +202,7 @@ export default function App() {
 
         const pollInterval = setInterval(async () => {
             try {
-                const res = await fetch(`http://localhost:3000/api/status/${jobId}`);
+                const res = await fetch(`https://thezenith.onrender.com/api/status/${jobId}`);
                 const data = await res.json();
 
                 if (!res.ok) {
